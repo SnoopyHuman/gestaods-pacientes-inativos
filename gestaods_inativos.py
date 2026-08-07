@@ -27,7 +27,7 @@ import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
 APP_NOME = "Pacientes Inativos - GestaoDS"
-APP_VERSAO = "1.1"
+APP_VERSAO = "1.2"
 
 API_BASE = "https://devapi.gestaods.com.br"
 ROTA_MEDICOS = "/api/v2/core/medicos/"
