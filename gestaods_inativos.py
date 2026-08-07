@@ -127,6 +127,27 @@ def _retangulo_arredondado(tela, x1, y1, x2, y2, raio, **opcoes):
     return tela.create_polygon(pontos, smooth=True, **opcoes)
 
 
+def ativar_dpi_windows():
+    """Faz o Windows entregar pixels reais em vez de esticar a janela.
+
+    Sem isso, com a escala do Windows em 125%/150% o sistema amplia a janela
+    por cima (fica borrada e maior que a tela). Precisa rodar ANTES de criar a
+    janela. Falha em silencio em versoes antigas do Windows.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        try:
+            # 2 = por monitor; mantem nitido ao mover entre telas diferentes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def aplicar_aparencia_nativa(janela):
     """No Windows 11: barra de titulo escura, cantos arredondados e fundo Mica.
 
@@ -568,8 +589,9 @@ class Aplicativo(tk.Tk):
         super().__init__()
         self.title("Pacientes Inativos")
         self.configure(bg=C_FUNDO)
-        self.geometry("880x1000")
-        self.minsize(820, 680)
+        # Minimo pequeno de proposito: com a area central rolavel e a barra de
+        # acao fixa no rodape, o app continua utilizavel em telas baixas.
+        self.minsize(700, 480)
 
         self.config_salva = carregar_config()
         self.medicos = []
@@ -580,9 +602,28 @@ class Aplicativo(tk.Tk):
         self._preparar_estilos()
         self._montar_interface()
         self._restaurar_config()
+        self._ajustar_a_tela()
 
         aplicar_aparencia_nativa(self)
         self.after(100, self._consumir_fila)
+
+    def _ajustar_a_tela(self):
+        """Nunca abrir maior que a tela: a barra de tarefas e as bordas comem
+        espaco, e em 1366x768 uma janela alta demais cortaria o rodape."""
+        self.update_idletasks()
+        largura_tela = self.winfo_screenwidth()
+        altura_tela = self.winfo_screenheight()
+
+        # margem para barra de tarefas / dock e bordas da janela
+        disponivel_l = max(largura_tela - 60, 640)
+        disponivel_a = max(altura_tela - 120, 460)
+
+        largura = min(900, disponivel_l)
+        altura = min(max(self.winfo_reqheight(), 640), disponivel_a)
+
+        x = max((largura_tela - largura) // 2, 0)
+        y = max((altura_tela - altura) // 3, 0)
+        self.geometry("{}x{}+{}+{}".format(int(largura), int(altura), int(x), int(y)))
 
     # ------------------------------------------------------------ aparencia
 
@@ -663,17 +704,81 @@ class Aplicativo(tk.Tk):
 
     def _montar_interface(self):
         raiz = tk.Frame(self, bg=C_FUNDO)
-        raiz.pack(fill="both", expand=True, padx=26, pady=(20, 22))
+        raiz.pack(fill="both", expand=True)
 
-        self._montar_cabecalho(raiz)
-        self._montar_cartao_chave(raiz)
-        self._montar_cartao_medicos(raiz)
-        self._montar_cartao_periodo(raiz)
-        self._montar_cartao_destino(raiz)
-        self._montar_rodape(raiz)
-        self._montar_registro(raiz)
+        # 1) Cabecalho: fixo no topo.
+        topo = tk.Frame(raiz, bg=C_FUNDO)
+        topo.pack(side="top", fill="x", padx=26, pady=(18, 10))
+        self._montar_cabecalho(topo)
+
+        # 2) Barra de acao: fixa no rodape. Empacotada ANTES da area central
+        #    para que o pack reserve o espaco dela primeiro - assim o botao
+        #    "Gerar planilha" nunca e cortado, por menor que fique a janela.
+        base = tk.Frame(raiz, bg=C_FUNDO)
+        base.pack(side="bottom", fill="x", padx=26, pady=(8, 14))
+        self._montar_rodape(base)
+
+        # 3) Meio: rolavel, recebe todo o resto.
+        area, conteudo = self._criar_area_rolavel(raiz)
+        area.pack(side="top", fill="both", expand=True, padx=(26, 10))
+
+        self._montar_cartao_chave(conteudo)
+        self._montar_cartao_medicos(conteudo)
+        self._montar_cartao_periodo(conteudo)
+        self._montar_cartao_destino(conteudo)
+        self._montar_registro(conteudo)
 
         self._log("Pronto. Informe a chave de API para comecar.")
+
+    def _criar_area_rolavel(self, pai):
+        """Area com rolagem vertical. Devolve (moldura, conteudo)."""
+        moldura = tk.Frame(pai, bg=C_FUNDO)
+        tela = tk.Canvas(moldura, bg=C_FUNDO, highlightthickness=0, bd=0)
+        barra = ttk.Scrollbar(moldura, orient="vertical", command=tela.yview)
+        conteudo = tk.Frame(tela, bg=C_FUNDO)
+
+        item = tela.create_window(0, 0, anchor="nw", window=conteudo)
+        tela.configure(yscrollcommand=barra.set)
+        tela.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+
+        def ao_mudar_conteudo(_evento=None):
+            tela.configure(scrollregion=tela.bbox("all"))
+
+        largura_atual = {"valor": None}
+
+        def ao_mudar_tela(evento):
+            if evento.width != largura_atual["valor"]:
+                largura_atual["valor"] = evento.width
+                tela.itemconfigure(item, width=evento.width)
+            ao_mudar_conteudo()
+
+        conteudo.bind("<Configure>", ao_mudar_conteudo)
+        tela.bind("<Configure>", ao_mudar_tela)
+
+        def rolar(evento):
+            # deixa a lista de medicos e o log rolarem por conta propria
+            alvo = self.winfo_containing(evento.x_root, evento.y_root)
+            while alvo is not None:
+                if isinstance(alvo, (tk.Listbox, tk.Text)):
+                    return
+                alvo = getattr(alvo, "master", None)
+            if evento.num == 4:
+                passos = -1
+            elif evento.num == 5:
+                passos = 1
+            elif sys.platform == "darwin":
+                passos = -evento.delta
+            else:
+                passos = int(-evento.delta / 120)
+            tela.yview_scroll(passos, "units")
+
+        self.bind_all("<MouseWheel>", rolar)
+        self.bind_all("<Button-4>", rolar)
+        self.bind_all("<Button-5>", rolar)
+
+        self._tela_rolagem = tela
+        return moldura, conteudo
 
     def _montar_cabecalho(self, pai):
         topo = tk.Frame(pai, bg=C_FUNDO)
@@ -918,7 +1023,7 @@ class Aplicativo(tk.Tk):
 
     def _montar_registro(self, pai):
         cartao = Cartao(pai, "Atividade", cor=C_CARTAO)
-        cartao.pack(fill="both", expand=True)
+        cartao.pack(fill="x")
 
         self.registro = tk.Text(
             cartao.corpo,
@@ -1219,6 +1324,7 @@ class Aplicativo(tk.Tk):
 
 
 def main():
+    ativar_dpi_windows()  # precisa vir antes de criar a janela
     Aplicativo().mainloop()
 
 
