@@ -23,10 +23,11 @@ import urllib.request
 from datetime import datetime
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
 APP_NOME = "Pacientes Inativos - GestaoDS"
-APP_VERSAO = "1.0"
+APP_VERSAO = "1.1"
 
 API_BASE = "https://devapi.gestaods.com.br"
 ROTA_MEDICOS = "/api/v2/core/medicos/"
@@ -54,6 +55,313 @@ PERIODOS = [
     ("3 anos ou mais (1095+ dias)", 1095, None),
     ("Personalizado", None, None),
 ]
+
+
+# ------------------------------------------------------------ tema "vidro"
+
+# Paleta escura inspirada no Liquid Glass: fundo profundo, painel translucido,
+# borda clara de vidro e um brilho especular no topo de cada cartao.
+C_FUNDO = "#0B0D12"
+C_CARTAO = "#161A23"
+C_CARTAO_ALT = "#1C2130"
+C_BORDA = "#2A3040"
+C_BRILHO = "#3A4356"
+C_CAMPO = "#0F131B"
+C_TEXTO = "#F2F4F8"
+C_TEXTO_2 = "#98A2B3"
+C_TEXTO_3 = "#6B7484"
+C_ACENTO = "#0A84FF"
+C_ACENTO_CLARO = "#3D9DFF"
+C_ACENTO_ESCURO = "#0060DF"
+C_SUCESSO = "#30D158"
+C_PERIGO = "#FF453A"
+
+RAIO_CARTAO = 16
+RAIO_BOTAO = 11
+
+
+def _fonte(preferidas, tamanho, peso="normal"):
+    """Escolhe a primeira fonte disponivel da lista (SF Pro, Segoe UI, ...)."""
+    try:
+        familias = set(tkfont.families())
+    except Exception:
+        familias = set()
+    for nome in preferidas:
+        if nome in familias:
+            return (nome, tamanho, peso)
+    return ("Helvetica", tamanho, peso)
+
+
+_DISPLAY = [
+    "SF Pro Display",
+    "Segoe UI Variable Display",
+    "Segoe UI Semibold",
+    "Segoe UI",
+    "Helvetica Neue",
+]
+_TEXTO = [
+    "SF Pro Text",
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    "Helvetica Neue",
+]
+_MONO = ["SF Mono", "Cascadia Mono", "Consolas", "Menlo", "Courier New"]
+
+
+def _retangulo_arredondado(tela, x1, y1, x2, y2, raio, **opcoes):
+    """Retangulo de cantos arredondados desenhado como poligono suavizado."""
+    pontos = [
+        x1 + raio, y1,
+        x2 - raio, y1,
+        x2, y1,
+        x2, y1 + raio,
+        x2, y2 - raio,
+        x2, y2,
+        x2 - raio, y2,
+        x1 + raio, y2,
+        x1, y2,
+        x1, y2 - raio,
+        x1, y1 + raio,
+        x1, y1,
+    ]
+    return tela.create_polygon(pontos, smooth=True, **opcoes)
+
+
+def aplicar_aparencia_nativa(janela):
+    """No Windows 11: barra de titulo escura, cantos arredondados e fundo Mica.
+
+    Tudo protegido: se a versao do Windows nao suportar, a janela continua
+    normal, sem erro.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        janela.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(janela.winfo_id())
+        definir = ctypes.windll.dwmapi.DwmSetWindowAttribute
+
+        def atributo(codigo, valor):
+            try:
+                dado = ctypes.c_int(valor)
+                definir(hwnd, codigo, ctypes.byref(dado), ctypes.sizeof(dado))
+            except Exception:
+                pass
+
+        atributo(20, 1)  # DWMWA_USE_IMMERSIVE_DARK_MODE (Win 10 20H1+)
+        atributo(19, 1)  # mesmo atributo em builds antigas
+        atributo(33, 2)  # DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
+        atributo(38, 2)  # DWMWA_SYSTEMBACKDROP_TYPE = MICA
+    except Exception:
+        pass
+
+
+class Cartao(tk.Frame):
+    """Painel de vidro: fundo arredondado, borda sutil e brilho no topo.
+
+    O Canvas do fundo e posicionado com place(), que nao propaga tamanho ao
+    pai. Assim a altura do cartao vem apenas do conteudo (corpo), e o Canvas so
+    pinta atras - sem realimentar eventos de redimensionamento.
+
+    A margem precisa ser >= RAIO_CARTAO: o corpo e um retangulo, e so fica
+    invisivel dentro da area arredondada se estiver recuado das quinas.
+    """
+
+    MARGEM = 20
+
+    def __init__(self, master, titulo=None, cor=C_CARTAO):
+        super().__init__(master, bg=C_FUNDO, highlightthickness=0, bd=0)
+        self._cor = cor
+
+        self.fundo = tk.Canvas(self, bg=C_FUNDO, highlightthickness=0, bd=0)
+        self.fundo.place(x=0, y=0, relwidth=1, relheight=1)
+
+        self.corpo = tk.Frame(self, bg=cor)
+        self.corpo.pack(fill="both", expand=True, padx=self.MARGEM, pady=self.MARGEM)
+
+        if titulo:
+            tk.Label(
+                self.corpo,
+                text=titulo.upper(),
+                bg=cor,
+                fg=C_TEXTO_3,
+                font=_fonte(_TEXTO, 9, "bold"),
+            ).pack(anchor="w", pady=(0, 12))
+
+        self.bind("<Configure>", self._ao_redimensionar)
+
+    def _ao_redimensionar(self, evento):
+        self._desenhar(evento.width, evento.height)
+
+    def _desenhar(self, largura, altura):
+        self.fundo.delete("all")
+        if largura < 8 or altura < 8:
+            return
+        _retangulo_arredondado(
+            self.fundo,
+            1,
+            1,
+            largura - 1,
+            altura - 1,
+            RAIO_CARTAO,
+            fill=self._cor,
+            outline=C_BORDA,
+            width=1,
+        )
+        # brilho especular: linha clara no topo, como a quina de um vidro
+        self.fundo.create_line(
+            RAIO_CARTAO + 2,
+            2,
+            largura - RAIO_CARTAO - 2,
+            2,
+            fill=C_BRILHO,
+        )
+
+
+class Botao(tk.Canvas):
+    """Botao arredondado desenhado a mao, com hover e press."""
+
+    ALTURA = 40
+
+    def __init__(self, master, texto, comando, tipo="primario", largura=None, fundo=C_CARTAO):
+        self.tipo = tipo
+        self.comando = comando
+        self.texto = texto
+        self._ativo = True
+        self._sobre = False
+        self._pressionado = False
+
+        fonte = _fonte(_TEXTO, 11, "bold")
+        if largura is None:
+            medidor = tkfont.Font(family=fonte[0], size=fonte[1], weight=fonte[2])
+            largura = medidor.measure(texto) + 40
+
+        super().__init__(
+            master,
+            width=largura,
+            height=self.ALTURA,
+            bg=fundo,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._fonte = fonte
+        self.bind("<Enter>", self._entrar)
+        self.bind("<Leave>", self._sair)
+        self.bind("<Button-1>", self._pressionar)
+        self.bind("<ButtonRelease-1>", self._soltar)
+        self._desenhar()
+
+    def _cores(self):
+        if not self._ativo:
+            return C_CARTAO_ALT, C_TEXTO_3, C_BORDA
+        if self.tipo == "primario":
+            fundo = C_ACENTO
+            if self._pressionado:
+                fundo = C_ACENTO_ESCURO
+            elif self._sobre:
+                fundo = C_ACENTO_CLARO
+            return fundo, "#FFFFFF", fundo
+        if self.tipo == "perigo":
+            return (C_CARTAO_ALT if not self._sobre else "#2A1F24"), C_PERIGO, C_BORDA
+        fundo = C_CARTAO_ALT if not self._sobre else "#242A3A"
+        return fundo, C_TEXTO, C_BORDA
+
+    def _desenhar(self):
+        self.delete("all")
+        largura = int(self["width"])
+        altura = int(self["height"])
+        fundo, cor_texto, borda = self._cores()
+        deslocamento = 1 if self._pressionado and self._ativo else 0
+
+        _retangulo_arredondado(
+            self,
+            1,
+            1 + deslocamento,
+            largura - 1,
+            altura - 1 + deslocamento,
+            RAIO_BOTAO,
+            fill=fundo,
+            outline=borda,
+            width=1,
+        )
+        # brilho superior do botao primario (reflexo de vidro)
+        if self.tipo == "primario" and self._ativo and not self._pressionado:
+            self.create_line(
+                RAIO_BOTAO + 2, 2, largura - RAIO_BOTAO - 2, 2, fill="#7FBEFF"
+            )
+        self.create_text(
+            largura / 2,
+            altura / 2 + deslocamento,
+            text=self.texto,
+            fill=cor_texto,
+            font=self._fonte,
+        )
+
+    def _entrar(self, _e=None):
+        self._sobre = True
+        self.configure(cursor="hand2" if self._ativo else "")
+        self._desenhar()
+
+    def _sair(self, _e=None):
+        self._sobre = False
+        self._pressionado = False
+        self._desenhar()
+
+    def _pressionar(self, _e=None):
+        if not self._ativo:
+            return
+        self._pressionado = True
+        self._desenhar()
+
+    def _soltar(self, _e=None):
+        if not self._ativo:
+            return
+        estava = self._pressionado
+        self._pressionado = False
+        self._desenhar()
+        if estava and self.comando:
+            self.comando()
+
+    def definir_estado(self, ativo):
+        self._ativo = bool(ativo)
+        self._desenhar()
+
+    def definir_texto(self, texto):
+        self.texto = texto
+        self._desenhar()
+
+
+class Barra(tk.Canvas):
+    """Barra de progresso arredondada, no tom de acento."""
+
+    ALTURA = 8
+
+    def __init__(self, master, fundo=C_CARTAO):
+        super().__init__(
+            master, height=self.ALTURA, bg=fundo, highlightthickness=0, bd=0
+        )
+        self._fracao = 0.0
+        self.bind("<Configure>", lambda _e: self._desenhar())
+
+    def definir(self, valor, maximo):
+        self._fracao = 0.0 if not maximo else max(0.0, min(1.0, valor / maximo))
+        self._desenhar()
+
+    def _desenhar(self):
+        self.delete("all")
+        largura = self.winfo_width()
+        if largura < 8:
+            return
+        raio = self.ALTURA / 2
+        _retangulo_arredondado(
+            self, 0, 0, largura, self.ALTURA, raio, fill=C_CAMPO, outline=""
+        )
+        preenchido = largura * self._fracao
+        if preenchido >= self.ALTURA:
+            _retangulo_arredondado(
+                self, 0, 0, preenchido, self.ALTURA, raio, fill=C_ACENTO, outline=""
+            )
 
 
 # ---------------------------------------------------------------- configuracao
@@ -258,8 +566,10 @@ def abrir_no_explorador(caminho):
 class Aplicativo(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("{} v{}".format(APP_NOME, APP_VERSAO))
-        self.minsize(780, 660)
+        self.title("Pacientes Inativos")
+        self.configure(bg=C_FUNDO)
+        self.geometry("880x1000")
+        self.minsize(820, 680)
 
         self.config_salva = carregar_config()
         self.medicos = []
@@ -267,177 +577,369 @@ class Aplicativo(tk.Tk):
         self.cancelar = threading.Event()
         self.trabalhando = False
 
+        self._preparar_estilos()
         self._montar_interface()
         self._restaurar_config()
+
+        aplicar_aparencia_nativa(self)
         self.after(100, self._consumir_fila)
+
+    # ------------------------------------------------------------ aparencia
+
+    def _preparar_estilos(self):
+        self.fonte_titulo = _fonte(_DISPLAY, 24, "bold")
+        self.fonte_sub = _fonte(_TEXTO, 12)
+        self.fonte_corpo = _fonte(_TEXTO, 11)
+        self.fonte_rotulo = _fonte(_TEXTO, 10)
+        self.fonte_mono = _fonte(_MONO, 10)
+
+        estilo = ttk.Style(self)
+        try:
+            estilo.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        comum = dict(
+            fieldbackground=C_CAMPO,
+            background=C_CAMPO,
+            foreground=C_TEXTO,
+            bordercolor=C_BORDA,
+            lightcolor=C_BORDA,
+            darkcolor=C_BORDA,
+            insertcolor=C_TEXTO,
+            arrowcolor=C_TEXTO_2,
+            selectbackground=C_ACENTO,
+            selectforeground="#FFFFFF",
+        )
+        estilo.configure("Vidro.TEntry", padding=9, **comum)
+        estilo.configure("Vidro.TSpinbox", padding=7, **comum)
+        estilo.configure("Vidro.TCombobox", padding=7, **comum)
+        for nome in ("Vidro.TEntry", "Vidro.TSpinbox", "Vidro.TCombobox"):
+            estilo.map(
+                nome,
+                bordercolor=[("focus", C_ACENTO)],
+                lightcolor=[("focus", C_ACENTO)],
+                darkcolor=[("focus", C_ACENTO)],
+                fieldbackground=[("readonly", C_CAMPO), ("disabled", C_CARTAO_ALT)],
+                foreground=[("disabled", C_TEXTO_3)],
+            )
+
+        # lista suspensa do combobox
+        self.option_add("*TCombobox*Listbox.background", C_CARTAO_ALT)
+        self.option_add("*TCombobox*Listbox.foreground", C_TEXTO)
+        self.option_add("*TCombobox*Listbox.selectBackground", C_ACENTO)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
+        self.option_add("*TCombobox*Listbox.borderWidth", 0)
+
+    def _rotulo(self, pai, texto, fonte=None, cor=C_TEXTO_2, fundo=C_CARTAO):
+        return tk.Label(
+            pai,
+            text=texto,
+            bg=fundo,
+            fg=cor,
+            font=fonte or self.fonte_rotulo,
+            anchor="w",
+            justify="left",
+        )
+
+    def _caixa_selecao(self, pai, texto, variavel, fundo=C_CARTAO, comando=None):
+        return tk.Checkbutton(
+            pai,
+            text=texto,
+            variable=variavel,
+            command=comando,
+            bg=fundo,
+            fg=C_TEXTO_2,
+            selectcolor=C_CAMPO,
+            activebackground=fundo,
+            activeforeground=C_TEXTO,
+            highlightthickness=0,
+            bd=0,
+            font=self.fonte_rotulo,
+            cursor="hand2",
+        )
 
     # ------------------------------------------------------------ construcao
 
     def _montar_interface(self):
-        raiz = ttk.Frame(self, padding=12)
-        raiz.pack(fill="both", expand=True)
-        raiz.columnconfigure(0, weight=1)
+        raiz = tk.Frame(self, bg=C_FUNDO)
+        raiz.pack(fill="both", expand=True, padx=26, pady=(20, 22))
 
-        # 1. chave de API
-        caixa_chave = ttk.LabelFrame(raiz, text="1. Chave de API", padding=10)
-        caixa_chave.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        caixa_chave.columnconfigure(0, weight=1)
+        self._montar_cabecalho(raiz)
+        self._montar_cartao_chave(raiz)
+        self._montar_cartao_medicos(raiz)
+        self._montar_cartao_periodo(raiz)
+        self._montar_cartao_destino(raiz)
+        self._montar_rodape(raiz)
+        self._montar_registro(raiz)
+
+        self._log("Pronto. Informe a chave de API para comecar.")
+
+    def _montar_cabecalho(self, pai):
+        topo = tk.Frame(pai, bg=C_FUNDO)
+        topo.pack(fill="x", pady=(0, 18))
+
+        tk.Label(
+            topo,
+            text="Pacientes Inativos",
+            bg=C_FUNDO,
+            fg=C_TEXTO,
+            font=self.fonte_titulo,
+        ).pack(anchor="w")
+        tk.Label(
+            topo,
+            text="Relatorio de pacientes sem consulta  ·  GestaoDS",
+            bg=C_FUNDO,
+            fg=C_TEXTO_3,
+            font=self.fonte_sub,
+        ).pack(anchor="w", pady=(2, 0))
+
+    def _montar_cartao_chave(self, pai):
+        cartao = Cartao(pai, "Chave de API")
+        cartao.pack(fill="x", pady=(0, 12))
+        corpo = cartao.corpo
+
+        linha = tk.Frame(corpo, bg=C_CARTAO)
+        linha.pack(fill="x")
 
         self.var_chave = tk.StringVar()
-        self.campo_chave = ttk.Entry(caixa_chave, textvariable=self.var_chave, show="*")
-        self.campo_chave.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.campo_chave = ttk.Entry(
+            linha,
+            textvariable=self.var_chave,
+            show="•",
+            style="Vidro.TEntry",
+            font=self.fonte_corpo,
+        )
+        self.campo_chave.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.botao_medicos = Botao(
+            linha, "Carregar medicos", self._carregar_medicos, tipo="secundario"
+        )
+        self.botao_medicos.pack(side="left")
+
+        opcoes = tk.Frame(corpo, bg=C_CARTAO)
+        opcoes.pack(fill="x", pady=(10, 0))
 
         self.var_mostrar_chave = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            caixa_chave,
-            text="Mostrar",
-            variable=self.var_mostrar_chave,
-            command=self._alternar_chave,
-        ).grid(row=0, column=1, padx=(0, 6))
-
-        self.botao_medicos = ttk.Button(
-            caixa_chave, text="Carregar medicos", command=self._carregar_medicos
-        )
-        self.botao_medicos.grid(row=0, column=2)
+        self._caixa_selecao(
+            opcoes, "Mostrar chave", self.var_mostrar_chave, comando=self._alternar_chave
+        ).pack(side="left")
 
         self.var_lembrar = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            caixa_chave,
-            text="Lembrar a chave neste computador",
-            variable=self.var_lembrar,
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self._caixa_selecao(
+            opcoes, "Lembrar neste computador", self.var_lembrar
+        ).pack(side="left", padx=(18, 0))
 
-        # 2. medicos
-        caixa_medicos = ttk.LabelFrame(raiz, text="2. Medicos", padding=10)
-        caixa_medicos.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
-        caixa_medicos.columnconfigure(0, weight=1)
-        caixa_medicos.rowconfigure(1, weight=1)
-        raiz.rowconfigure(1, weight=1)
+    def _montar_cartao_medicos(self, pai):
+        cartao = Cartao(pai, "Medicos")
+        cartao.pack(fill="x", pady=(0, 12))
+        corpo = cartao.corpo
 
-        self.rotulo_medicos = ttk.Label(
-            caixa_medicos, text="Informe a chave e clique em 'Carregar medicos'."
+        self.rotulo_medicos = self._rotulo(
+            corpo, "Informe a chave e clique em “Carregar medicos”."
         )
-        self.rotulo_medicos.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        self.rotulo_medicos.pack(fill="x", pady=(0, 10))
 
-        moldura_lista = ttk.Frame(caixa_medicos)
-        moldura_lista.grid(row=1, column=0, sticky="nsew")
-        moldura_lista.columnconfigure(0, weight=1)
-        moldura_lista.rowconfigure(0, weight=1)
+        linha = tk.Frame(corpo, bg=C_CARTAO)
+        linha.pack(fill="both", expand=True)
+
+        moldura = tk.Frame(linha, bg=C_BORDA, padx=1, pady=1)
+        moldura.pack(side="left", fill="both", expand=True)
 
         self.lista_medicos = tk.Listbox(
-            moldura_lista, selectmode="extended", height=8, exportselection=False
+            moldura,
+            selectmode="extended",
+            height=6,
+            exportselection=False,
+            bg=C_CAMPO,
+            fg=C_TEXTO,
+            selectbackground=C_ACENTO,
+            selectforeground="#FFFFFF",
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+            font=self.fonte_corpo,
+            activestyle="none",
         )
-        self.lista_medicos.grid(row=0, column=0, sticky="nsew")
+        self.lista_medicos.pack(side="left", fill="both", expand=True)
+
         barra = ttk.Scrollbar(
-            moldura_lista, orient="vertical", command=self.lista_medicos.yview
+            moldura, orient="vertical", command=self.lista_medicos.yview
         )
-        barra.grid(row=0, column=1, sticky="ns")
+        barra.pack(side="right", fill="y")
         self.lista_medicos.configure(yscrollcommand=barra.set)
 
-        botoes_medicos = ttk.Frame(caixa_medicos)
-        botoes_medicos.grid(row=1, column=1, sticky="n", padx=(8, 0))
-        ttk.Button(
-            botoes_medicos, text="Selecionar todos", command=self._selecionar_todos
-        ).pack(fill="x", pady=(0, 4))
-        ttk.Button(
-            botoes_medicos, text="Limpar selecao", command=self._limpar_selecao
-        ).pack(fill="x")
-        ttk.Label(
-            botoes_medicos,
-            text="Sem selecao =\ntodos os medicos",
-            justify="left",
-            foreground="#555555",
-        ).pack(pady=(8, 0))
+        lado = tk.Frame(linha, bg=C_CARTAO)
+        lado.pack(side="left", fill="y", padx=(12, 0))
+        Botao(
+            lado, "Selecionar todos", self._selecionar_todos, tipo="secundario", largura=150
+        ).pack(pady=(0, 8))
+        Botao(
+            lado, "Limpar selecao", self._limpar_selecao, tipo="secundario", largura=150
+        ).pack()
+        self._rotulo(
+            lado, "Sem selecao =\ntodos os medicos", cor=C_TEXTO_3
+        ).pack(anchor="w", pady=(12, 0))
 
-        # 3. periodo
-        caixa_periodo = ttk.LabelFrame(raiz, text="3. Periodo sem consultar", padding=10)
-        caixa_periodo.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+    def _montar_cartao_periodo(self, pai):
+        cartao = Cartao(pai, "Periodo sem consultar")
+        cartao.pack(fill="x", pady=(0, 12))
+        corpo = cartao.corpo
 
-        ttk.Label(caixa_periodo, text="Faixa:").grid(row=0, column=0, sticky="w")
+        linha = tk.Frame(corpo, bg=C_CARTAO)
+        linha.pack(fill="x")
+
+        self._rotulo(linha, "Faixa").pack(side="left", padx=(0, 8))
         self.var_periodo = tk.StringVar(value=PERIODOS[1][0])
         self.combo_periodo = ttk.Combobox(
-            caixa_periodo,
+            linha,
             textvariable=self.var_periodo,
             values=[p[0] for p in PERIODOS],
             state="readonly",
-            width=32,
+            width=30,
+            style="Vidro.TCombobox",
+            font=self.fonte_corpo,
         )
-        self.combo_periodo.grid(row=0, column=1, sticky="w", padx=(6, 16))
+        self.combo_periodo.pack(side="left", padx=(0, 20))
         self.combo_periodo.bind("<<ComboboxSelected>>", self._aplicar_periodo)
 
-        ttk.Label(caixa_periodo, text="De (dias):").grid(row=0, column=2, sticky="w")
+        self._rotulo(linha, "De").pack(side="left", padx=(0, 6))
         self.var_dias_min = tk.StringVar(value="365")
         self.campo_dias_min = ttk.Spinbox(
-            caixa_periodo, from_=0, to=20000, textvariable=self.var_dias_min, width=8
+            linha,
+            from_=0,
+            to=20000,
+            textvariable=self.var_dias_min,
+            width=7,
+            style="Vidro.TSpinbox",
+            font=self.fonte_corpo,
         )
-        self.campo_dias_min.grid(row=0, column=3, padx=(6, 16))
+        self.campo_dias_min.pack(side="left", padx=(0, 16))
 
-        ttk.Label(caixa_periodo, text="Ate (dias):").grid(row=0, column=4, sticky="w")
+        self._rotulo(linha, "Ate").pack(side="left", padx=(0, 6))
         self.var_dias_max = tk.StringVar(value="")
         self.campo_dias_max = ttk.Spinbox(
-            caixa_periodo, from_=0, to=20000, textvariable=self.var_dias_max, width=8
+            linha,
+            from_=0,
+            to=20000,
+            textvariable=self.var_dias_max,
+            width=7,
+            style="Vidro.TSpinbox",
+            font=self.fonte_corpo,
         )
-        self.campo_dias_max.grid(row=0, column=5, padx=(6, 0))
+        self.campo_dias_max.pack(side="left", padx=(0, 6))
+        self._rotulo(linha, "dias", cor=C_TEXTO_3).pack(side="left")
 
-        ttk.Label(
-            caixa_periodo,
-            text="365 dias = 1 ano. Deixe 'Ate' vazio para nao ter limite maximo.",
-            foreground="#555555",
-        ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 6))
+        self._rotulo(
+            corpo,
+            "365 dias = 1 ano.  Deixe “Ate” vazio para nao ter limite maximo.",
+            cor=C_TEXTO_3,
+        ).pack(fill="x", pady=(10, 12))
 
-        ttk.Label(caixa_periodo, text="Considerar:").grid(row=2, column=0, sticky="w")
+        tipo = tk.Frame(corpo, bg=C_CARTAO)
+        tipo.pack(fill="x")
+        self._rotulo(tipo, "Considerar").pack(side="left", padx=(0, 12))
         self.var_tipo = tk.StringVar(value="atendimento")
-        ttk.Radiobutton(
-            caixa_periodo,
-            text="Ultimo atendimento",
-            variable=self.var_tipo,
-            value="atendimento",
-        ).grid(row=2, column=1, sticky="w")
-        ttk.Radiobutton(
-            caixa_periodo,
-            text="Ultimo agendamento",
-            variable=self.var_tipo,
-            value="agendamento",
-        ).grid(row=2, column=2, columnspan=2, sticky="w")
+        for texto, valor in (
+            ("Ultimo atendimento", "atendimento"),
+            ("Ultimo agendamento", "agendamento"),
+        ):
+            tk.Radiobutton(
+                tipo,
+                text=texto,
+                variable=self.var_tipo,
+                value=valor,
+                bg=C_CARTAO,
+                fg=C_TEXTO_2,
+                selectcolor=C_CAMPO,
+                activebackground=C_CARTAO,
+                activeforeground=C_TEXTO,
+                highlightthickness=0,
+                bd=0,
+                font=self.fonte_rotulo,
+                cursor="hand2",
+            ).pack(side="left", padx=(0, 16))
 
         self._aplicar_periodo()
 
-        # 4. pasta de destino
-        caixa_saida = ttk.LabelFrame(raiz, text="4. Pasta de destino", padding=10)
-        caixa_saida.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        caixa_saida.columnconfigure(0, weight=1)
+    def _montar_cartao_destino(self, pai):
+        cartao = Cartao(pai, "Pasta de destino")
+        cartao.pack(fill="x", pady=(0, 16))
+        corpo = cartao.corpo
+
+        linha = tk.Frame(corpo, bg=C_CARTAO)
+        linha.pack(fill="x")
 
         self.var_pasta = tk.StringVar(value=os.path.expanduser("~"))
-        ttk.Entry(caixa_saida, textvariable=self.var_pasta).grid(
-            row=0, column=0, sticky="ew", padx=(0, 6)
+        ttk.Entry(
+            linha,
+            textvariable=self.var_pasta,
+            style="Vidro.TEntry",
+            font=self.fonte_corpo,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        Botao(linha, "Escolher…", self._escolher_pasta, tipo="secundario").pack(
+            side="left"
         )
-        ttk.Button(caixa_saida, text="Escolher...", command=self._escolher_pasta).grid(
-            row=0, column=1
+
+    def _montar_rodape(self, pai):
+        rodape = tk.Frame(pai, bg=C_FUNDO)
+        rodape.pack(fill="x", pady=(0, 14))
+
+        self.botao_gerar = Botao(
+            rodape,
+            "Gerar planilha",
+            self._gerar,
+            tipo="primario",
+            largura=180,
+            fundo=C_FUNDO,
         )
+        self.botao_gerar.pack(side="left")
 
-        # 5. execucao
-        caixa_acao = ttk.Frame(raiz)
-        caixa_acao.grid(row=4, column=0, sticky="ew")
-        caixa_acao.columnconfigure(1, weight=1)
-
-        self.botao_gerar = ttk.Button(
-            caixa_acao, text="Gerar planilha", command=self._gerar
+        self.botao_cancelar = Botao(
+            rodape, "Cancelar", self._cancelar, tipo="perigo", largura=120, fundo=C_FUNDO
         )
-        self.botao_gerar.grid(row=0, column=0, padx=(0, 8))
+        self.botao_cancelar.pack(side="right")
+        self.botao_cancelar.definir_estado(False)
 
-        self.barra_progresso = ttk.Progressbar(caixa_acao, mode="determinate")
-        self.barra_progresso.grid(row=0, column=1, sticky="ew")
-
-        self.botao_cancelar = ttk.Button(
-            caixa_acao, text="Cancelar", command=self._cancelar, state="disabled"
+        meio = tk.Frame(rodape, bg=C_FUNDO)
+        meio.pack(side="left", fill="x", expand=True, padx=18)
+        self.barra_progresso = Barra(meio, fundo=C_FUNDO)
+        self.barra_progresso.pack(fill="x", pady=(16, 4))
+        self.rotulo_progresso = tk.Label(
+            meio,
+            text="",
+            bg=C_FUNDO,
+            fg=C_TEXTO_3,
+            font=self.fonte_rotulo,
+            anchor="w",
         )
-        self.botao_cancelar.grid(row=0, column=2, padx=(8, 0))
+        self.rotulo_progresso.pack(fill="x")
 
-        self.registro = tk.Text(raiz, height=9, wrap="word", state="disabled")
-        self.registro.grid(row=5, column=0, sticky="nsew", pady=(10, 0))
-        raiz.rowconfigure(5, weight=1)
+    def _montar_registro(self, pai):
+        cartao = Cartao(pai, "Atividade", cor=C_CARTAO)
+        cartao.pack(fill="both", expand=True)
 
-        self._log("{} v{} pronto.".format(APP_NOME, APP_VERSAO))
+        self.registro = tk.Text(
+            cartao.corpo,
+            height=5,
+            wrap="word",
+            state="disabled",
+            bg=C_CAMPO,
+            fg=C_TEXTO_2,
+            insertbackground=C_TEXTO,
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=self.fonte_mono,
+            spacing1=1,
+            spacing3=3,
+        )
+        self.registro.pack(fill="both", expand=True)
+        self.registro.tag_configure("erro", foreground=C_PERIGO)
+        self.registro.tag_configure("ok", foreground=C_SUCESSO)
 
     def _restaurar_config(self):
         chave = self.config_salva.get("chave_api") or ""
@@ -453,15 +955,17 @@ class Aplicativo(tk.Tk):
 
     # ------------------------------------------------------------ auxiliares
 
-    def _log(self, texto):
+    def _log(self, texto, marcador=None):
         marca = datetime.now().strftime("%H:%M:%S")
         self.registro.configure(state="normal")
-        self.registro.insert("end", "[{}] {}\n".format(marca, texto))
+        self.registro.insert("end", "{}  {}\n".format(marca, texto), marcador or ())
         self.registro.see("end")
         self.registro.configure(state="disabled")
 
     def _alternar_chave(self):
-        self.campo_chave.configure(show="" if self.var_mostrar_chave.get() else "*")
+        self.campo_chave.configure(
+            show="" if self.var_mostrar_chave.get() else "•"
+        )
 
     def _aplicar_periodo(self, _evento=None):
         rotulo = self.var_periodo.get()
@@ -492,10 +996,9 @@ class Aplicativo(tk.Tk):
 
     def _travar_interface(self, travado):
         self.trabalhando = travado
-        estado = "disabled" if travado else "normal"
-        self.botao_gerar.configure(state=estado)
-        self.botao_medicos.configure(state=estado)
-        self.botao_cancelar.configure(state="normal" if travado else "disabled")
+        self.botao_gerar.definir_estado(not travado)
+        self.botao_medicos.definir_estado(not travado)
+        self.botao_cancelar.definir_estado(travado)
 
     def _persistir_config(self):
         dados = dict(self.config_salva)
@@ -522,8 +1025,8 @@ class Aplicativo(tk.Tk):
         if not chave or self.trabalhando:
             return
         self._travar_interface(True)
-        self.botao_cancelar.configure(state="disabled")
-        self._log("Carregando medicos...")
+        self.botao_cancelar.definir_estado(False)
+        self._log("Carregando medicos…")
 
         def tarefa():
             try:
@@ -543,7 +1046,7 @@ class Aplicativo(tk.Tk):
         try:
             dias_min = int(self.var_dias_min.get())
         except ValueError:
-            messagebox.showwarning(APP_NOME, "'De (dias)' precisa ser um numero.")
+            messagebox.showwarning(APP_NOME, "“De” precisa ser um numero.")
             return
 
         texto_max = self.var_dias_max.get().strip()
@@ -552,11 +1055,11 @@ class Aplicativo(tk.Tk):
             try:
                 dias_max = int(texto_max)
             except ValueError:
-                messagebox.showwarning(APP_NOME, "'Ate (dias)' precisa ser um numero.")
+                messagebox.showwarning(APP_NOME, "“Ate” precisa ser um numero.")
                 return
             if dias_max < dias_min:
                 messagebox.showwarning(
-                    APP_NOME, "'Ate (dias)' precisa ser maior ou igual a 'De (dias)'."
+                    APP_NOME, "“Ate” precisa ser maior ou igual a “De”."
                 )
                 return
 
@@ -570,17 +1073,17 @@ class Aplicativo(tk.Tk):
             selecionados = [self.medicos[i]["id"] for i in indices]
             if not selecionados:
                 selecionados = [m["id"] for m in self.medicos]
-                self._log("Nenhum medico marcado - usando todos.")
+                self._log("Nenhum medico marcado — usando todos.")
         else:
             selecionados = []
-            self._log("Lista de medicos nao carregada - buscando todos.")
+            self._log("Lista de medicos nao carregada — buscando todos.")
 
         self._persistir_config()
         self.cancelar.clear()
         self._travar_interface(True)
-        self.barra_progresso.configure(value=0, maximum=100)
+        self.barra_progresso.definir(0, 100)
         self._log(
-            "Buscando pacientes sem {} ha {}+ dias{}...".format(
+            "Buscando pacientes sem {} ha {}+ dias{}…".format(
                 self.var_tipo.get(),
                 dias_min,
                 "" if dias_max is None else " (ate {} dias)".format(dias_max),
@@ -627,7 +1130,7 @@ class Aplicativo(tk.Tk):
     def _cancelar(self):
         if self.trabalhando:
             self.cancelar.set()
-            self._log("Cancelando apos a pagina atual...")
+            self._log("Cancelando apos a pagina atual…")
 
     # ------------------------------------------------------------------ fila
 
@@ -639,21 +1142,33 @@ class Aplicativo(tk.Tk):
 
                 if tipo == "medicos":
                     self._receber_medicos(mensagem[1])
+
                 elif tipo == "progresso":
                     _, pagina, total, registros = mensagem
-                    self.barra_progresso.configure(value=pagina, maximum=max(total, 1))
-                    self._log(
-                        "Pagina {}/{} ({} registros no total)".format(
+                    self.barra_progresso.definir(pagina, max(total, 1))
+                    self.rotulo_progresso.configure(
+                        text="Pagina {} de {}  ·  {} registros".format(
                             pagina, total, registros
                         )
                     )
+                    if pagina == 1 or pagina % 10 == 0 or pagina == total:
+                        self._log(
+                            "Pagina {}/{} — {} registros".format(
+                                pagina, total, registros
+                            )
+                        )
+
                 elif tipo == "fim":
                     _, caminho, quantidade = mensagem
                     self._travar_interface(False)
-                    self.barra_progresso.configure(
-                        value=self.barra_progresso["maximum"]
+                    self.barra_progresso.definir(1, 1)
+                    self.rotulo_progresso.configure(
+                        text="Concluido — {} pacientes".format(quantidade)
                     )
-                    self._log("Pronto: {} pacientes em {}".format(quantidade, caminho))
+                    self._log(
+                        "Planilha gerada: {} pacientes".format(quantidade), "ok"
+                    )
+                    self._log(caminho)
                     if messagebox.askyesno(
                         APP_NOME,
                         "Planilha gerada com {} pacientes:\n\n{}\n\nAbrir a pasta?".format(
@@ -661,20 +1176,26 @@ class Aplicativo(tk.Tk):
                         ),
                     ):
                         abrir_no_explorador(os.path.dirname(caminho))
+
                 elif tipo == "vazio":
                     self._travar_interface(False)
+                    self.rotulo_progresso.configure(text="Nenhum resultado")
                     self._log("Nenhum paciente encontrado para esse filtro.")
                     messagebox.showinfo(
                         APP_NOME, "Nenhum paciente encontrado para esse filtro."
                     )
+
                 elif tipo == "cancelado":
                     self._travar_interface(False)
-                    self.barra_progresso.configure(value=0)
+                    self.barra_progresso.definir(0, 1)
+                    self.rotulo_progresso.configure(text="Cancelado")
                     self._log("Busca cancelada. Nenhum arquivo foi gerado.")
+
                 elif tipo == "erro":
                     self._travar_interface(False)
-                    self.barra_progresso.configure(value=0)
-                    self._log("ERRO: {}".format(mensagem[1]))
+                    self.barra_progresso.definir(0, 1)
+                    self.rotulo_progresso.configure(text="Erro")
+                    self._log(mensagem[1].replace("\n", " "), "erro")
                     messagebox.showerror(APP_NOME, mensagem[1])
         except queue.Empty:
             pass
@@ -685,15 +1206,15 @@ class Aplicativo(tk.Tk):
         self.medicos = medicos
         self.lista_medicos.delete(0, "end")
         for medico in medicos:
-            rotulo = medico["nome"]
+            rotulo = "  " + medico["nome"]
             if medico["especialidade"]:
-                rotulo += "  -  {}".format(medico["especialidade"])
+                rotulo += "   ·   {}".format(medico["especialidade"].title())
             self.lista_medicos.insert("end", rotulo)
         self.rotulo_medicos.configure(
             text="{} medicos nesta chave. Selecione um ou mais "
             "(sem selecao = todos).".format(len(medicos))
         )
-        self._log("{} medicos carregados.".format(len(medicos)))
+        self._log("{} medicos carregados.".format(len(medicos)), "ok")
         self._persistir_config()
 
 
