@@ -1,0 +1,53 @@
+name: Gerar executavel Windows
+
+# Roda a cada push na main, sob demanda pelo botao "Run workflow",
+# e tambem quando uma tag v* e criada (nesse caso publica uma Release).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build no Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Gerar o executavel
+        run: >
+          pyinstaller
+          --onefile
+          --windowed
+          --name "Pacientes Inativos GestaoDS"
+          --clean
+          gestaods_inativos.py
+
+      - name: Publicar o .exe como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pacientes-Inativos-GestaoDS-Windows
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Anexar o .exe a Release (somente em tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+          generate_release_notes: true
